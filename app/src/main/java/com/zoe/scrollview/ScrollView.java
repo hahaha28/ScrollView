@@ -3,51 +3,61 @@ package com.zoe.scrollview;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.Scroller;
 
-public class ScrollView extends ViewGroup {
+public class ScrollView extends ViewGroup  {
 
-    private float xDown;    //按下的位置x坐标
-    private float xLastMove;    //上一次接触的位置x坐标
-    private float xMove;    //现在接触的位置的x坐标
-    private long downTime;  //按下的时间
-    private long upTime;    //抬起的时间
-    private Scroller mScroller;     //Scroller对象
-    private int mTouchSlop;       //系统检测最小滑动距离
-    private float judgeSpeed=0.8f;     //系统检测生效滑动速度
-    private int leftBorder;   //滑动的左边界
-    private int rightBorder;  //滑动的右边界
+    private float xDown;    //down的x坐标
+    private float xLastMove;    //上一次move的x坐标
+    private float xMove;        //当前move的x坐标
+    private GestureDetector detector;   //手势判断
+    private int mTouchSlop;         //最小滑动判断距离
+    private int leftBorder;     //左边界
+    private int rightBorder;    //右边界
+    private Scroller mScroller;     //Scroller
+    private boolean scrollEnable = true;    //滑动开关
+
+    public ScrollView(Context context) {
+        this(context, null);
+    }
 
     public ScrollView(Context context, AttributeSet attrs) {
-        super(context, attrs);
+        this(context, attrs, 0);
+    }
+
+    public ScrollView(Context context, AttributeSet attrs, int defStyleAttr) {
+        super(context, attrs, defStyleAttr);
         mScroller = new Scroller(context);
-        mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        detector = new GestureDetector(context,new FlingListener());
+//        mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        mTouchSlop = 8;
     }
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int measureWidth=MeasureSpec.getSize(widthMeasureSpec);
-        int measureHeight=MeasureSpec.getSize(heightMeasureSpec);
-        int measureWidthMode=MeasureSpec.getMode(widthMeasureSpec);
-        int measureHeightMode=MeasureSpec.getMode(heightMeasureSpec);
-        int height=0;
-        int width=0;
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-        int childCount=getChildCount();
-        for(int i=0;i<childCount;++i){
-            View childView = getChildAt(i);
-            measureChild(childView,widthMeasureSpec,heightMeasureSpec);
+        int widthMeasureSize = MeasureSpec.getSize(widthMeasureSpec);
+        int heightMeasureSize = MeasureSpec.getSize(heightMeasureSpec);
+        int widthMeasureMode = MeasureSpec.getMode(widthMeasureSpec);
+        int heightMeasureMode = MeasureSpec.getMode(heightMeasureSpec);
+        int width = 0, height = 0;
+
+        int childCount = getChildCount();
+        for (int i = 0; i < childCount; ++i) {
+            View child = getChildAt(i);
+            child.setClickable(true);
+            measureChild(child, widthMeasureSpec, heightMeasureSpec);
         }
         if(childCount != 0){
             height = getChildAt(0).getMeasuredHeight();
             width = getChildAt(0).getMeasuredWidth();
         }
-        setMeasuredDimension((measureWidthMode == MeasureSpec.EXACTLY) ? measureWidth : width
-                        , (measureHeightMode == MeasureSpec.EXACTLY) ? measureHeight : height);
+        setMeasuredDimension(widthMeasureMode == MeasureSpec.EXACTLY ? widthMeasureSize : width
+                , heightMeasureMode == MeasureSpec.EXACTLY ? heightMeasureSize : height);
     }
 
     @Override
@@ -74,18 +84,27 @@ public class ScrollView extends ViewGroup {
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
-//        Log.d("MyDebug","onInterceptTouchEvent,action="+ev.getAction());
+//        Log.e("MyDebug","action="+ev.getAction());
         switch (ev.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 xDown = ev.getRawX();
-                downTime=System.currentTimeMillis();
                 xLastMove = xDown;
                 break;
             case MotionEvent.ACTION_MOVE:
                 xMove=ev.getRawX();
-                int diff= (int) Math.abs(xMove-xLastMove);
+                int diff= (int) (xMove-xLastMove);
+//                Log.e("MyDebug","diff="+diff);
                 xLastMove=xMove;
-                if(diff > mTouchSlop){
+                if(Math.abs(diff) > mTouchSlop){
+                    if(getScrollX() == 0 && diff > 0){
+                        return false;
+                    }
+                    if(getScrollX() == -rightBorder && diff < 0){
+                        return false;
+                    }
+//                    Log.e("MyDebug","拦截");
+                    //屏蔽父View的拦截
+                    getParent().requestDisallowInterceptTouchEvent(true);
                     return true;
                 }
                 break;
@@ -95,12 +114,17 @@ public class ScrollView extends ViewGroup {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-//        Log.d("MyDebug","onTouchEvent,event="+event.getAction());
+
+//        Log.d("MyDebug","action="+event.getAction());
+        //如果是fling，则在GestureDetector中处理
+        if(detector.onTouchEvent(event)){
+            return true;
+        }
+        //处理不是fling的情况
         switch (event.getAction()){
             case MotionEvent.ACTION_MOVE:
-//                Log.d("MyDebug","Move");
-                xMove=event.getRawX();
-                int dx= (int) (xLastMove-xMove);   //要移动的距离
+                xMove = event.getRawX();
+                int dx = (int) (xLastMove-xMove);
                 int xScrolled=getScrollX();     //已经移动过的距离
                 xLastMove=xMove;
                 if( (xScrolled+dx) <leftBorder){
@@ -111,42 +135,62 @@ public class ScrollView extends ViewGroup {
                     scrollTo(rightBorder-getWidth(),0);
                     return true;
                 }
-//                Log.d("MyDebug","scrollBy "+dx);
                 scrollBy(dx,0);
                 break;
             case MotionEvent.ACTION_UP:
-                upTime=System.currentTimeMillis();
-                float speed = (xDown-event.getRawX()) / (upTime-downTime);
-//                Log.d("MyDebug","speed="+speed+(speed< -judgeSpeed));
+            case MotionEvent.ACTION_CANCEL:
                 int judgeX=getWidth();
                 View secView=getChildAt(1);
                 if(secView != null){
                     judgeX += secView.getWidth()/2;
                 }
-                if( speed > judgeSpeed ){//滑动到右边界
-                    mScroller.startScroll(getScrollX(),0,rightBorder-getWidth()-getScrollX(),0);
-                }else if(speed < -judgeSpeed ) { //滑动到左边界
-                    mScroller.startScroll(getScrollX(),0,leftBorder-getScrollX(),0);
-                }else if(getScrollX() > judgeX-getWidth()){  //滑动到右边界
-                    mScroller.startScroll(getScrollX(),0,rightBorder-getWidth()-getScrollX(),0);
+                if(getScrollX() > judgeX-getWidth()){  //滑动到右边界
+                    scrollToRight();
                 }else if ( getScrollX() <= judgeX-getWidth()){  //滑动到左边界
-                    mScroller.startScroll(getScrollX(),0,leftBorder-getScrollX(),0);
+                    scrollToLeft();
                 }
-                invalidate();
                 break;
         }
         return true;
     }
 
-    /**
-     * 将控件还原到初始位置
-     */
-    public void restore(){
-        int scrollX=getScrollX();
-        if(scrollX != 0){
-            mScroller.startScroll(scrollX,0,leftBorder-scrollX,0);
-            invalidate();
+    private class FlingListener extends GestureDetector.SimpleOnGestureListener{
+        @Override
+        public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+//            Log.d("MyDebug","vx="+velocityX);
+            if(velocityX > 0){
+                scrollToLeft();
+            }else{
+                scrollToRight();
+            }
+            return true;
         }
+    }
+
+    /**
+     * 是否允许滑动
+     * @param scrollEnable true允许滑动
+     */
+    public void setScrollEnable(boolean scrollEnable){
+        this.scrollEnable = scrollEnable;
+    }
+
+    /**
+     * 滑动到左边界
+     */
+    public void scrollToLeft() {
+        int scrolledX = getScrollX();
+        mScroller.startScroll(scrolledX, 0, leftBorder - scrolledX, 0);
+        invalidate();
+    }
+
+    /**
+     * 滑动到右边界
+     */
+    public void scrollToRight() {
+        int scrolledX = getScrollX();
+        mScroller.startScroll(scrolledX,0,rightBorder - scrolledX -getWidth(),0);
+        invalidate();
     }
 
     @Override
@@ -156,4 +200,6 @@ public class ScrollView extends ViewGroup {
             invalidate();
         }
     }
+
+
 }
